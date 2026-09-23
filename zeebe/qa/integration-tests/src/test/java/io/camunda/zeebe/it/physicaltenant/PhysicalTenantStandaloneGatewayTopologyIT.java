@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 
 import io.camunda.client.api.response.PartitionBrokerRole;
 import io.camunda.client.api.response.PartitionInfo;
+import io.camunda.client.api.response.Topology;
 import io.camunda.configuration.SecondaryStorage;
 import io.camunda.configuration.SecondaryStorage.SecondaryStorageType;
 import io.camunda.zeebe.qa.util.cluster.PhysicalTenantsITHelper;
@@ -33,7 +34,7 @@ import java.util.stream.IntStream;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
 
-/** All other physical-tenant topology ITs uses an embedded gateway. */
+/** All other physical-tenant topology ITs use an embedded gateway. */
 @ZeebeIntegration
 final class PhysicalTenantStandaloneGatewayTopologyIT {
 
@@ -79,7 +80,7 @@ final class PhysicalTenantStandaloneGatewayTopologyIT {
                       .withPtConfig(
                           TENANT_A,
                           camunda -> {
-                            // Standalone gateways fails fast if no secondary storage is configured
+                            // A standalone gateway fails fast if no secondary storage is configured
                             // with basic auth.
                             applyRdbmsH2(camunda.getData().getSecondaryStorage(), "gw-tenanta");
                             camunda
@@ -150,10 +151,35 @@ final class PhysicalTenantStandaloneGatewayTopologyIT {
           .pollInSameThread()
           .ignoreExceptions()
           .untilAsserted(
-              () ->
-                  TopologyAssert.assertThat(client.newTopologyRequest().send().join())
-                      .isComplete(BROKERS_COUNT, partitionsCount, BROKERS_COUNT));
+              () -> {
+                final var topology = client.newTopologyRequest().send().join();
+                TopologyAssert.assertThat(topology)
+                    .isComplete(BROKERS_COUNT, partitionsCount, BROKERS_COUNT);
+                assertResolvedRoles(topology, partitionsCount);
+              });
     }
+  }
+
+  private static void assertResolvedRoles(final Topology topology, final int partitionsCount) {
+    final var partitionsById =
+        topology.getBrokers().stream()
+            .flatMap(broker -> broker.getPartitions().stream())
+            .collect(Collectors.groupingBy(PartitionInfo::getPartitionId));
+
+    assertThat(partitionsById)
+        .describedAs("topology partitions with resolved roles")
+        .hasSize(partitionsCount);
+    partitionsById.forEach(
+        (partitionId, replicas) -> {
+          assertThat(replicas)
+              .describedAs("replicas of partition %d", partitionId)
+              .extracting(PartitionInfo::getRole)
+              .containsOnly(PartitionBrokerRole.LEADER, PartitionBrokerRole.FOLLOWER);
+          assertThat(replicas)
+              .describedAs("leaders of partition %d", partitionId)
+              .filteredOn(PartitionInfo::isLeader)
+              .hasSize(1);
+        });
   }
 
   private void awaitLeaderAmongSurvivors(
