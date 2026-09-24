@@ -233,26 +233,42 @@ describe('<BatchOperationActions />', () => {
 	it('should cancel and converge on a partial-completion outcome without waiting for CANCELED specifically', async ({
 		worker,
 	}) => {
-		worker.use(
-			mockCancelBatchOperationEndpoint({successResponse: new HttpResponse(null, {status: 204}), delay: 200}),
-			mockGetBatchOperationEndpoint({
-				successResponse: HttpResponse.json(createBatchOperation({state: 'PARTIALLY_COMPLETED'})),
-			}),
-		);
+		let pollRequestCount = 0;
+		worker.events.on('request:start', ({request}) => {
+			if (request.method === 'GET' && request.url.endsWith(`/batch-operations/${BATCH_OPERATION_KEY}`)) {
+				pollRequestCount += 1;
+			}
+		});
 
-		const screen = await renderActions('ACTIVE');
-		await userEvent.click(screen.getByRole('button', {name: 'More actions'}));
-		await userEvent.click(screen.getByRole('menuitem', {name: 'Cancel'}));
+		try {
+			worker.use(
+				mockCancelBatchOperationEndpoint({successResponse: new HttpResponse(null, {status: 204})}),
+				mockGetBatchOperationEndpoint({
+					successResponse: HttpResponse.json(createBatchOperation({state: 'ACTIVE'})),
+				}),
+			);
 
-		// The OverflowMenu closes the item as soon as it's clicked, so re-open it to confirm the
-		// mutation actually went pending (proving the POST + transition poll ran) before asserting it
-		// settles — otherwise this would pass just as well if the poll were removed.
-		await expect.element(screen.getByRole('button', {name: 'More actions'})).toBeVisible();
-		await userEvent.click(screen.getByRole('button', {name: 'More actions'}));
-		await expect.element(screen.getByRole('menuitem', {name: 'Cancel'})).toBeDisabled();
-		// Still the same open menu — no need to reclick the trigger, which would toggle it shut.
-		await expect.element(screen.getByRole('menuitem', {name: 'Cancel'})).not.toBeDisabled();
-		expect(notificationsStore.notifications).toEqual([]);
+			const screen = await renderActions('ACTIVE');
+			await userEvent.click(screen.getByRole('button', {name: 'More actions'}));
+			await userEvent.click(screen.getByRole('menuitem', {name: 'Cancel'}));
+
+			await expect.element(screen.getByRole('button', {name: 'More actions'})).toBeVisible();
+			await userEvent.click(screen.getByRole('button', {name: 'More actions'}));
+			await expect.element(screen.getByRole('menuitem', {name: 'Cancel'})).toBeDisabled();
+			await expect.poll(() => pollRequestCount).toBeGreaterThan(0);
+
+			worker.use(
+				mockGetBatchOperationEndpoint({
+					successResponse: HttpResponse.json(createBatchOperation({state: 'PARTIALLY_COMPLETED'})),
+				}),
+			);
+
+			await expect.element(screen.getByRole('menuitem', {name: 'Cancel'})).not.toBeDisabled();
+			expect(pollRequestCount).toBeGreaterThan(1);
+			expect(notificationsStore.notifications).toEqual([]);
+		} finally {
+			worker.events.removeAllListeners('request:start');
+		}
 	});
 
 	it('should recover from a transient polling failure and still converge on success', async ({worker}) => {
