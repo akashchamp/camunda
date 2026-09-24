@@ -1,0 +1,18 @@
+/*
+ * Copyright Camunda Services GmbH and/or licensed to Camunda Services GmbH under
+ * one or more contributor license agreements. See the NOTICE file distributed
+ * with this work for additional information regarding copyright ownership.
+ * Licensed under the Camunda License 1.0. You may not use this file
+ * except in compliance with the Camunda License 1.0.
+ */
+
+/* DS DataTable's `expansion` prop injects an expand-toggle button for every row
+ * unconditionally — there is no per-row override in the installed package (see
+ * docs/migration/operate-dashboard-ds-gaps.md). The legacy Carbon dashboard hides
+ * that toggle for rows with nothing to expand via `button { display: none }`
+ * scoped to the row; this reaches past DataTable's own markup the same way,
+ * since the toggle itself isn't reachable through any prop.
+ */
+.composed-cell-table tr:has([data-expandable='false']) [data-slot='data-table-expand-toggle'] {
+	display: none;
+}
