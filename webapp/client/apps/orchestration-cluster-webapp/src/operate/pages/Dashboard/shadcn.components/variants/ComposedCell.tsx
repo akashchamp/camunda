@@ -25,9 +25,7 @@ const ComposedCell: React.FC<ExpandableListVariantProps> = ({header, rows, rende
 			// `data-expandable` marks whether this row has anything to expand into,
 			// so ComposedCell.css can hide DataTable's own always-on expand toggle
 			// for it — matching Carbon's `button { display: none }` on the same case.
-			cell: ({row}) => (
-				<div data-expandable={renderExpansion(row.original) !== null}>{row.original.content}</div>
-			),
+			cell: ({row}) => <div data-expandable={renderExpansion(row.original) !== null}>{row.original.content}</div>,
 		},
 	];
 
