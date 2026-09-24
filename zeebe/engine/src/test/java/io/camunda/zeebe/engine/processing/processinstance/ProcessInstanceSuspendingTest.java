@@ -12,9 +12,13 @@ import static io.camunda.zeebe.protocol.record.intent.ProcessInstanceIntent.SUSP
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.camunda.zeebe.engine.perf.TestEngine;
+import io.camunda.zeebe.engine.state.immutable.SuspensionState.State;
 import io.camunda.zeebe.model.bpmn.Bpmn;
 import io.camunda.zeebe.protocol.record.intent.JobIntent;
+import io.camunda.zeebe.protocol.record.intent.ProcessInstanceIntent;
 import io.camunda.zeebe.protocol.record.intent.ProcessMessageSubscriptionIntent;
+import io.camunda.zeebe.protocol.record.intent.SignalIntent;
+import io.camunda.zeebe.protocol.record.intent.SignalSubscriptionIntent;
 import io.camunda.zeebe.test.util.Strings;
 import io.camunda.zeebe.test.util.record.RecordingExporter;
 import org.junit.jupiter.api.Test;
@@ -87,6 +91,62 @@ final class ProcessInstanceSuspendingTest {
       assertThat(jobSuspended.getPosition()).isLessThan(suspended.getPosition());
       assertThat(suspended.getSourceRecordPosition())
           .isEqualTo(suspending.getSourceRecordPosition());
+    } finally {
+      context.close();
+      RecordingExporter.reset();
+    }
+  }
+
+  @Test
+  void shouldActivateSignalCatchEventWhileSuspending() throws Exception {
+    final var context = TestEngine.createTestContext();
+    try {
+      final var engine = TestEngine.createSinglePartitionEngine(context);
+      final var processId = Strings.newRandomValidBpmnId();
+      final var broadcasterId = Strings.newRandomValidBpmnId();
+      final var signalName = Strings.newRandomValidBpmnId();
+
+      // given
+      engine
+          .createDeploymentClient()
+          .withXmlResource(
+              "receiver.bpmn",
+              Bpmn.createExecutableProcess(processId)
+                  .startEvent()
+                  .intermediateCatchEvent("catch")
+                  .signal(signalName)
+                  .endEvent()
+                  .done())
+          .withXmlResource(
+              "broadcaster.bpmn",
+              Bpmn.createExecutableProcess(broadcasterId)
+                  .startEvent()
+                  .intermediateThrowEvent("broadcast")
+                  .signal(signalName)
+                  .endEvent()
+                  .done())
+          .deploy();
+      final long processInstanceKey =
+          engine.createProcessInstanceClient().ofBpmnProcessId(processId).create();
+      RecordingExporter.signalSubscriptionRecords(SignalSubscriptionIntent.CREATED)
+          .withSignalName(signalName)
+          .getFirst();
+      final var suspensionState = engine.getProcessingState().getSuspensionState();
+      suspensionState.setSuspensionState(processInstanceKey, State.SUSPENDING);
+      assertThat(suspensionState.getSuspensionState(processInstanceKey))
+          .isEqualTo(State.SUSPENDING);
+
+      // when
+      engine.createProcessInstanceClient().ofBpmnProcessId(broadcasterId).create();
+
+      // then
+      RecordingExporter.signalRecords(SignalIntent.BROADCASTED)
+          .withSignalName(signalName)
+          .getFirst();
+      RecordingExporter.processInstanceRecords(ProcessInstanceIntent.ELEMENT_COMPLETED)
+          .withProcessInstanceKey(processInstanceKey)
+          .withElementId("catch")
+          .getFirst();
     } finally {
       context.close();
       RecordingExporter.reset();
