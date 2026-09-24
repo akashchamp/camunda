@@ -124,6 +124,22 @@ final class SuspensionBehaviorTest {
     verifyOnSuspended(processor, command);
   }
 
+  @ParameterizedTest
+  @EnumSource(SuspensionAction.class)
+  void shouldUseSuspendedClassificationWhileSuspending(final SuspensionAction behavior) {
+    // given
+    markerIs(State.SUSPENDING);
+    final var command = command();
+    final var processor = overridingProcessor(behavior);
+
+    // when
+    final var result = suspensionBehavior.process(command, processor);
+
+    // then
+    assertThat(result.outcome()).isEqualTo(behavior);
+    verifyOnSuspended(processor, command);
+  }
+
   @Test
   void shouldProcessWhenAwareProcessorReturnsNull() {
     // given
