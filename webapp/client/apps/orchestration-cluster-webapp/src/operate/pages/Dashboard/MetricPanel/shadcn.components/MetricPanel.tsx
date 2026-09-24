@@ -18,8 +18,10 @@ type Props = {
 	count: RunningInstancesCount;
 };
 
-// Carbon's productiveHeading04/03 (28px/20px, 600 weight) map to DS's heading-lg/heading-md
-// (same sizes; heading-md already carries font-semibold, heading-lg needs it added).
+// Carbon's productiveHeading04/03 (28px/20px) map to DS's heading-lg/heading-md
+// (same sizes). heading-md already carries font-semibold for the two labels below;
+// heading-lg is kept at its DS-default weight (font-normal) here rather than forcing
+// Carbon's 600-weight total-instances heading.
 const MetricPanel: React.FC<Props> = ({count}) => {
 	const {t} = useTranslation();
 
@@ -29,10 +31,7 @@ const MetricPanel: React.FC<Props> = ({count}) => {
 				data-testid="total-instances-link"
 				to="/operate/processes"
 				search={runningOrAllInstancesFilter(count.total)}
-				className={cn(
-					typographyVariants({variant: 'heading-lg'}),
-					'mb-4 inline-block font-semibold text-foreground hover:underline',
-				)}
+				className={cn(typographyVariants({variant: 'heading-lg'}), 'mb-4 inline-block text-foreground hover:underline')}
 			>
 				{t('operate.dashboard.runningInstancesTotal', {count: count.total})}
 			</Link>
