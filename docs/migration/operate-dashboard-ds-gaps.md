@@ -18,13 +18,55 @@ non-interactive strip rather than removed outright.
 Needs design review: is an always-present (even if visually empty) header row acceptable for this
 list shape, or should DS `DataTable` gain a way to omit it?
 
-### Gap: no per-row override for the expansion toggle
+### Gap: no per-row override for the expansion toggle — resolved, adopted native `expansion` plus a CSS override
 
 DS `DataTable`'s `expansion` prop renders an expand/collapse toggle for every row unconditionally —
 there is no public `getRowCanExpand`-style override (confirmed against the installed package's
-`data-table.js`). The Carbon original hid the toggle entirely for rows with nothing to expand.
-Current code doesn't use the `expansion` prop at all; it composes its own toggle inside the single
-content column instead, showing it only when a row has `expandedContents`.
+`data-table.js`: `getRowCanExpand` is hardcoded to `() => true` whenever `expansion` is set, and the
+toggle button's own `cell` renderer doesn't consult per-row expansion content either). The legacy
+Carbon dashboard (`PartiallyExpandableDataTable/styled.ts`) hides the toggle for rows with nothing to
+expand via `button { display: none }` scoped to the row.
 
-Needs design review: should DS `DataTable`'s `expansion` prop gain a per-row override, or is a
-composed-in-column toggle (as done here) the intended pattern for lists like this one?
+Decision: switched to the native `expansion` prop (matching the DS Storybook expansion pattern:
+https://camunda.github.io/design-system/?path=/story/ui-datatable--expansion), and matched Carbon's
+own hiding behavior on top of it with a CSS `:has()` rule in `ComposedCell.css`: the `content` cell
+marks itself `data-expandable="false"` when it has no `expandedContents` entry, and
+`tr:has([data-expandable='false']) [data-slot='data-table-expand-toggle'] { display: none }` hides
+that row's toggle — the same outcome as Carbon, reached from outside the component since there is no
+prop for it.
+
+Follow-on: the pagination loading skeletons are kept as siblings around `DataTable` rather than
+synthetic table rows, specifically so they don't pick up this same always-on toggle.
+
+Still open: should DS `DataTable`'s `expansion` prop gain a per-row override, so consumers don't need
+a `:has()` workaround to match Carbon's behavior?
+
+### Open design question: the row shape itself
+
+The Carbon original gives each row a single opaque content cell, into which the name, the counts
+and the ratio bar are all composed together. Ported literally onto DS `DataTable`, that makes the
+table a layout container rather than a table: nothing is sortable per column, the counts are not
+addressable as data, and the sr-only header row above is a direct consequence (see the first gap).
+
+Three candidate row shapes are in review:
+
+|       Variant        |                            Row shape                            |                                            Trade-off                                            |
+|----------------------|-----------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
+| `composed`           | One content cell — name, counts and ratio bar composed together | Carbon parity. Keeps the header-row gap and forfeits per-column sorting.                        |
+| `structured-columns` | Real `Name` / `Active` / `Incidents` columns, counts as badges  | Makes it an actual table — sortable, real headers. Loses the at-a-glance ratio the bar conveys. |
+| `badge-row`          | Name plus discrete coloured count badges, no ratio bar          | Most compact; severity read from colour rather than by judging a bar's proportion.              |
+
+This is tracked as a component axis, not a branch: `ExpandableList` takes a `variant` prop resolved
+from `ExpandableList.variants.ts`, so the decision is a one-line change to
+`DEFAULT_EXPANDABLE_LIST_VARIANT` and no consumer call site changes. Candidates and a
+`/operate-preview/expandable-list-demo?variant=…` switcher live on the `operate-ds-expandable-variants`
+branch, which is opened as a draft PR for review and closed — never merged — once a shape is chosen.
+
+Needs design review: which row shape should Operate's list tiles adopt? The answer applies beyond the
+Dashboard, since InstancesByProcess and IncidentsByError both render through this component.
+
+Noted while prototyping `structured-columns`: it modelled drill-down versions as real sibling rows
+inserted into `data` rather than through `DataTable`'s `expansion` prop, which reads as one
+continuous shaded band across the three columns. The shipped variants all use the native
+`expansion` prop instead, to keep one expansion behaviour across candidates. If `structured-columns`
+wins, whether drill-downs should become sibling rows is a follow-up question.
