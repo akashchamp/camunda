@@ -13,7 +13,9 @@ import io.camunda.webapps.schema.entities.BeforeVersion880;
 import io.camunda.webapps.schema.entities.SinceVersion;
 import io.camunda.webapps.schema.entities.auditlog.AuditLogActorType;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -55,7 +57,31 @@ public class BatchOperationEntity extends AbstractExporterEntity<BatchOperationE
 
   @BeforeVersion880 private List<BatchOperationErrorEntity> errors = List.of();
 
+  /**
+   * Per partition, the highest key of the BATCH_OPERATION_CHUNK CREATED records already applied to
+   * {@link #operationsTotalCount}. Guards against double-counting when the same record is exported
+   * more than once (e.g. exporter restart before position acknowledgment).
+   *
+   * @since 8.11.0
+   */
+  @SinceVersion(value = "8.11.0", requireDefault = true)
+  private List<ProcessedChunkRecordEntity> lastProcessedChunkRecords = List.of();
+
   @JsonIgnore private Object[] sortValues;
+
+  /**
+   * Per-record item counts accumulated within a single flush cycle by the batch operation chunk
+   * handler, keyed by the originating record's key. Not persisted; consumed when building the
+   * idempotency guard script params on flush.
+   */
+  @JsonIgnore private Map<Long, Integer> pendingChunkRecordItemCounts = new LinkedHashMap<>();
+
+  /**
+   * Partition of the chunk records accumulated in {@link #pendingChunkRecordItemCounts}. An
+   * exporter instance only ever handles records of a single partition, so one value per flush cycle
+   * is enough. Not persisted.
+   */
+  @JsonIgnore private Integer pendingChunkRecordPartitionId;
 
   public String getName() {
     return name;
@@ -174,6 +200,36 @@ public class BatchOperationEntity extends AbstractExporterEntity<BatchOperationE
     return this;
   }
 
+  public List<ProcessedChunkRecordEntity> getLastProcessedChunkRecords() {
+    return lastProcessedChunkRecords;
+  }
+
+  public BatchOperationEntity setLastProcessedChunkRecords(
+      final List<ProcessedChunkRecordEntity> lastProcessedChunkRecords) {
+    this.lastProcessedChunkRecords = lastProcessedChunkRecords;
+    return this;
+  }
+
+  public Integer getPendingChunkRecordPartitionId() {
+    return pendingChunkRecordPartitionId;
+  }
+
+  public BatchOperationEntity setPendingChunkRecordPartitionId(
+      final Integer pendingChunkRecordPartitionId) {
+    this.pendingChunkRecordPartitionId = pendingChunkRecordPartitionId;
+    return this;
+  }
+
+  public Map<Long, Integer> getPendingChunkRecordItemCounts() {
+    return pendingChunkRecordItemCounts;
+  }
+
+  public BatchOperationEntity setPendingChunkRecordItemCounts(
+      final Map<Long, Integer> pendingChunkRecordItemCounts) {
+    this.pendingChunkRecordItemCounts = pendingChunkRecordItemCounts;
+    return this;
+  }
+
   public AuditLogActorType getActorType() {
     return actorType;
   }
@@ -216,6 +272,9 @@ public class BatchOperationEntity extends AbstractExporterEntity<BatchOperationE
         31 * result + (operationsCompletedCount != null ? operationsCompletedCount.hashCode() : 0);
     result = 31 * result + (operationsFailedCount != null ? operationsFailedCount.hashCode() : 0);
     result = 31 * result + (errors != null ? errors.hashCode() : 0);
+    result =
+        31 * result
+            + (lastProcessedChunkRecords != null ? lastProcessedChunkRecords.hashCode() : 0);
     return result;
   }
 
@@ -276,6 +335,9 @@ public class BatchOperationEntity extends AbstractExporterEntity<BatchOperationE
     if (!Objects.equals(errors, that.errors)) {
       return false;
     }
+    if (!Objects.equals(lastProcessedChunkRecords, that.lastProcessedChunkRecords)) {
+      return false;
+    }
 
     return operationsFinishedCount != null
         ? operationsFinishedCount.equals(that.operationsFinishedCount)
@@ -318,6 +380,8 @@ public class BatchOperationEntity extends AbstractExporterEntity<BatchOperationE
         + operationsCompletedCount
         + ", errors="
         + errors
+        + ", lastProcessedChunkRecords="
+        + lastProcessedChunkRecords
         + '}';
   }
 

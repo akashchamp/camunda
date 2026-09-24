@@ -12,12 +12,13 @@ import io.camunda.exporter.handlers.ExportHandler;
 import io.camunda.exporter.index.TargetIndex;
 import io.camunda.exporter.store.BatchRequest;
 import io.camunda.exporter.tasks.batchoperations.BatchOperationUpdateTask;
-import io.camunda.webapps.schema.descriptors.template.BatchOperationTemplate;
 import io.camunda.webapps.schema.entities.operation.BatchOperationEntity;
 import io.camunda.zeebe.protocol.record.Record;
 import io.camunda.zeebe.protocol.record.ValueType;
 import io.camunda.zeebe.protocol.record.intent.BatchOperationChunkIntent;
 import io.camunda.zeebe.protocol.record.value.BatchOperationChunkRecordValue;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -37,6 +38,53 @@ import java.util.Map;
  */
 public class BatchOperationChunkCreatedHandler
     implements ExportHandler<BatchOperationEntity, BatchOperationChunkRecordValue> {
+
+  private static final String PARTITION_ID_PARAM = "partitionId";
+  private static final String CHUNK_RECORD_KEYS_PARAM = "chunkRecordKeys";
+  private static final String CHUNK_RECORD_ITEM_COUNTS_PARAM = "chunkRecordItemCounts";
+  private static final String MAX_CHUNK_RECORD_KEY_PARAM = "maxChunkRecordKey";
+
+  // Guards operationsTotalCount against duplicate export of the same CHUNK_CREATED record (e.g. an
+  // exporter restart before position acknowledgment causes a resend). An exporter replays its own
+  // partition's log in ascending position, and the chunk records are written by that partition
+  // itself, so their keys arrive in ascending order: one high-water-mark key per partition is
+  // enough to recognise an already applied record, and keeps the tracking state bounded by the
+  // partition count instead of growing with every chunk.
+  // Elasticsearch/OpenSearch deserialize a persisted "long" back into a Painless Integer when its
+  // value happens to fit in an int, so stored values are compared via longValue() rather than
+  // directly - the latter would silently mismatch.
+  private static final String SCRIPT =
+      """
+          if (ctx._source.lastProcessedChunkRecords == null) {
+            ctx._source.lastProcessedChunkRecords = [];
+          }
+          long lastKey = -1;
+          def marker = null;
+          for (def candidate : ctx._source.lastProcessedChunkRecords) {
+            if (((Number) candidate.partitionId).intValue() == params.partitionId) {
+              marker = candidate;
+              lastKey = ((Number) candidate.recordKey).longValue();
+              break;
+            }
+          }
+          int delta = 0;
+          for (int i = 0; i < params.chunkRecordKeys.size(); i++) {
+            if (((Number) params.chunkRecordKeys[i]).longValue() > lastKey) {
+              delta += (int) params.chunkRecordItemCounts[i];
+            }
+          }
+          long maxKey = ((Number) params.maxChunkRecordKey).longValue();
+          if (maxKey > lastKey) {
+            if (marker == null) {
+              ctx._source.lastProcessedChunkRecords.add(
+                  ["partitionId": params.partitionId, "recordKey": maxKey]);
+            } else {
+              marker.recordKey = maxKey;
+            }
+          }
+          ctx._source.operationsTotalCount = ctx._source.operationsTotalCount + delta;
+          ctx._source.endDate = null;
+      """;
 
   private final String indexName;
 
@@ -76,9 +124,17 @@ public class BatchOperationChunkCreatedHandler
   @Override
   public void updateEntity(
       final Record<BatchOperationChunkRecordValue> record, final BatchOperationEntity entity) {
-    // set to just the size of the current chunk. delta update is performed in the update script
+    // keyed by the record's own (replay-stable) key so a duplicate updateEntity() call for the
+    // same record - e.g. the batch writer retrying this entity after a failed flush - overwrites
+    // rather than doubles its contribution
+    entity
+        .getPendingChunkRecordItemCounts()
+        .put(record.getKey(), record.getValue().getItems().size());
+    entity.setPendingChunkRecordPartitionId(record.getPartitionId());
     entity.setOperationsTotalCount(
-        entity.getOperationsTotalCount() + record.getValue().getItems().size());
+        entity.getPendingChunkRecordItemCounts().values().stream()
+            .mapToInt(Integer::intValue)
+            .sum());
   }
 
   @Override
@@ -89,14 +145,18 @@ public class BatchOperationChunkCreatedHandler
     // re-processes the counts. Extract the batchKey from the composite cache ID (batchKey:chunk).
     final String batchOperationKey = entity.getId().split(":")[0];
 
-    batchRequest.updateWithScript(
-        index,
-        batchOperationKey,
-        """
-            ctx._source.operationsTotalCount = ctx._source.operationsTotalCount + params.operationsTotalCount;
-            ctx._source.endDate = null;
-        """,
-        Map.of(BatchOperationTemplate.OPERATIONS_TOTAL_COUNT, entity.getOperationsTotalCount()));
+    final var recordKeys = new ArrayList<>(entity.getPendingChunkRecordItemCounts().keySet());
+    final var itemCounts = new ArrayList<>(entity.getPendingChunkRecordItemCounts().values());
+
+    final Map<String, Object> params = new HashMap<>();
+    params.put(PARTITION_ID_PARAM, entity.getPendingChunkRecordPartitionId());
+    params.put(CHUNK_RECORD_KEYS_PARAM, recordKeys);
+    params.put(CHUNK_RECORD_ITEM_COUNTS_PARAM, itemCounts);
+    params.put(
+        MAX_CHUNK_RECORD_KEY_PARAM,
+        recordKeys.stream().mapToLong(Long::longValue).max().orElse(-1));
+
+    batchRequest.updateWithScript(index, batchOperationKey, SCRIPT, params);
   }
 
   @Override
