@@ -11,13 +11,8 @@ import {Link} from '@tanstack/react-router';
 import {typographyVariants} from '@camunda/design-system';
 import {cn} from '#/shared/cn';
 import {InstancesBar} from '#/operate/components/InstancesBar/shadcn.components/InstancesBar';
+import type {RunningInstancesCount} from '../../useRunningInstancesCount';
 import {runningOrAllInstancesFilter} from '../../processesLinkFilters';
-
-type RunningInstancesCount = {
-	total: number;
-	withIncidents: number;
-	withoutIncidents: number;
-};
 
 type Props = {
 	count: RunningInstancesCount;
