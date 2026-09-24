@@ -60,7 +60,7 @@ migration. Cost is paid once per suspend, and once per resume cycle, not on ever
 
 - **Suspend:** append `ProcessInstance.SUSPENDING`, close subscriptions, append `Job.SUSPENDED` for
   every `ACTIVATABLE` or `WAITING_FOR_SECRET_RESOLUTION` job, then append
-  `ProcessInstance.SUSPENDED`. The `SUSPENDING` marker uses the suspended gate classification; all
+  `ProcessInstance.SUSPENDED`. Commands targeting the `SUSPENDING` marker process normally. All
   work and the `SUSPENDED` response still complete in one record batch: the suspend processor
   validates and writes `SUSPENDING`, then invokes the suspending processor synchronously for the
   remaining work. `Job.SUSPENDED` carries the job's own record, including its variables, so it is

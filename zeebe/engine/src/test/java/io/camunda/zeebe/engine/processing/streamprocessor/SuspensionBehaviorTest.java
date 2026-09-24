@@ -126,7 +126,7 @@ final class SuspensionBehaviorTest {
 
   @ParameterizedTest
   @EnumSource(SuspensionAction.class)
-  void shouldUseSuspendedClassificationWhileSuspending(final SuspensionAction behavior) {
+  void shouldProcessWithoutClassificationWhileSuspending(final SuspensionAction behavior) {
     // given
     markerIs(State.SUSPENDING);
     final var command = command();
@@ -136,8 +136,10 @@ final class SuspensionBehaviorTest {
     final var result = suspensionBehavior.process(command, processor);
 
     // then
-    assertThat(result.outcome()).isEqualTo(behavior);
-    verifyOnSuspended(processor, command);
+    assertThat(result.outcome()).isEqualTo(SuspensionAction.PROCESS);
+    assertThat(result.processInstanceKey()).isEqualTo(PROCESS_INSTANCE_KEY);
+    assertThat(result.rejectionReason()).isNull();
+    verifyNoClassification(processor);
   }
 
   @Test

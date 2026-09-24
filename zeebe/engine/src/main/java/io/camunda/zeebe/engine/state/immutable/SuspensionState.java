@@ -34,10 +34,9 @@ public interface SuspensionState {
    *     has none. The marker is only removed once resuming has fully drained the buffer.
    *     <p>This reflects marker <em>presence</em>, not a specific state, and does not imply {@link
    *     State#SUSPENDING}, {@link State#SUSPENDED}, and {@link State#RESUMING} should be gated
-   *     identically — e.g. the primary buffering gate must buffer forward-progress commands while
-   *     {@code SUSPENDING} or {@code SUSPENDED} but pass them through while {@code RESUMING}.
-   *     Callers that need to distinguish these states should branch on {@link #getSuspensionState}
-   *     instead.
+   *     identically — the primary gate passes commands through while {@code SUSPENDING}, buffers
+   *     them while {@code SUSPENDED}, and uses resume behavior while {@code RESUMING}. Callers that
+   *     need to distinguish these states should branch on {@link #getSuspensionState} instead.
    */
   boolean isSuspended(long processInstanceKey);
 
